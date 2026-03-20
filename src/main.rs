@@ -132,11 +132,13 @@ fn main() -> Result<()> {
         //print the first few bytes of the payload
         let preview_len = std::cmp::min(16, payload.len());
         print!("Preview: ");
-        for byte in &payload[0..preview_len]
+        for byte in &payload[0..preview_len] {
+            print!("{:02x} ", byte);
+        }
+        println!();
+    } else {
+        println!("Payload: empty");
     }
-
-
-
 }
 
 
