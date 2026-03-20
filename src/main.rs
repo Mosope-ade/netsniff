@@ -85,9 +85,54 @@ fn main() -> Result<()> {
                 let source = ipv4.source_addr();
                 let dest = ipv4.destination_addr();
 
-                println!("Ipv4:")
+                println!("IPv4: {} -> {}", source, dest);
+                println!("Protocol: {}", ipv4.protocol());
             }
+            Some(InternetSlice::Ipv6(ipv6, _)) => {
+                let source = Ipv6Addr::from(ipv6.source_addr());
+                let dest = Ipv6Addr::from(ipv6.destination_addr());
+
+                println!("IPv6: {} -> {}", source, dest);
+                println!("Next Header: {}", ipv6.next_header());
+            }
+            None => println!("No IP layer found"),
         }
+    }
+
+    //analyze transport layer
+    match &packet.transport {
+        Some(TransportSlice::Tcp(tcp)) => {
+            println!("TCP: Port {} -> {}", tcp.source_port(), tcp.destintion_port());
+            println!("Flags: SYN={} ACK{} FIN{} RST{}",
+                tcp.syn(), tcp.ack(), tcp.fin(), tcp.rst());
+            println!("Sequence: {}, Window: {}", tcp.sequence_number(), tcp.window_size());
+        }
+
+        Some(TransportSlice::Udp(udp)) => {
+            println!("UDP: Port {} -> {}", udp.source_port(), udp.destination_port());
+            println!("Length: {}", udp.length());
+        }
+        Some(TransportSlice::Icmpv4(_)) => {
+            println!("IMCPv4 packet");
+        }
+        Some(TransportSlice::Icmpv6(_)) => {
+            println!("ICMPv6 packet");
+        }
+        Some(TransportSlice::Unknown(u)) => {
+            println!("Unknown transport protocol: {}", u);
+        }
+        None => println!("No transport layer found"),
+    }
+
+    //analyze payload if present
+    let payload = &packet.payload;
+    if !payload.is_empty() {
+        println!("Payload: {} bytes", payload.len());
+
+        //print the first few bytes of the payload
+        let preview_len = std::cmp::min(16, payload.len());
+        print!("Preview: ");
+        for byte in &payload[0..preview_len]
     }
 
 
