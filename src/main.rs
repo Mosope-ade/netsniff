@@ -72,6 +72,24 @@ fn main() -> Result<()> {
         }
     }
 
+    fn analyze_packet(packet: SlicedPacket) {
+        //analyze link layer
+        if let Some(link) = &packet.link {
+            println!("Link layer: {:?}", link);
+        }
+
+        //analyze network layer
+        match &packet.ip {
+            Some(InternetSlice::Ipv4(ipv4, _)) => {
+
+                let source = ipv4.source_addr();
+                let dest = ipv4.destination_addr();
+
+                println!("Ipv4:")
+            }
+        }
+    }
+
 
 
 }
