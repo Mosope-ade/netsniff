@@ -13,6 +13,7 @@ use std::io::Write;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Instant, Duration};
 
 /// CLI ARGUMENTS 
 
@@ -51,6 +52,18 @@ struct Args {
     /// Show traffic statistics summary at end of session
     #[arg(long, default_value_t = false)]
     stats: bool,
+
+     /// Stop capture after N seconds e.g --timeout 30
+    #[arg(long)]
+    timeout: Option<u64>,
+
+    /// Filter by protocol: tcp, udp, icmp, dns, http
+    #[arg(long)]
+    protocol: Option<String>,
+
+    /// Enable promiscuous mode (capture all packets on the network)
+    #[arg(long, default_value_t = true)]
+    promisc: bool,
 }
 
 /// Data Structures
@@ -214,6 +227,10 @@ fn main() -> Result<()> {
 
     println!("{} {}", "Capturing on:".bold(), device.name.cyan().bold());
 
+    if args.promisc {
+        println!("{}", "Promiscuous mode: ON".dimmed());
+    }
+
     let mut cap = Capture::from_device(device)?
         .promisc(true)
         .snaplen(5000)
@@ -224,6 +241,14 @@ fn main() -> Result<()> {
         cap.filter(filter_expr, true)
             .with_context(|| format!("Invalid BPF filter: '{}'", filter_expr))?;
         println!("{} {}", "Filter:".bold(), filter_expr.yellow());
+    }
+
+     if let Some(proto) = &args.protocol {
+        println!("{} {}", "Protocol filter:".bold(), proto.yellow());
+    }
+
+    if let Some(secs) = args.timeout {
+        println!("{} {}s", "Timeout:".bold(), secs.to_string().yellow());
     }
 
     // ── Open .pcap save file if requested ─────────────────────────────────────
@@ -260,8 +285,19 @@ fn main() -> Result<()> {
     let mut json_records: Vec<PacketRecord> = Vec::new();
     let mut stats = Stats::new();
     let show_stats = args.stats || args.count == 0;
+    let start_time = Instant::now();
+    let timeout_duration = args.timeout.map(Duration::from_secs);
 
-    while args.count == 0 || packet_count < args.count {
+    while running.load(Ordering::SeqCst) && (args.count == 0 || packet_count < args.count) {
+
+        // Timeout check
+        if let Some(duration) = timeout_duration {
+            if start_time.elapsed() >= duration {
+                println!("{}", "Timeout reached.".yellow().bold());
+                break;
+            }
+        }
+
         match cap.next_packet() {
             Ok(packet) => {
                 packet_count += 1;
@@ -270,14 +306,6 @@ fn main() -> Result<()> {
                 if let Some(ref mut sf) = savefile {
                     sf.write(&packet);
                 }
-
-                println!(
-                    "\n{} {} {} {}",
-                    format!("[#{}]", packet_count).bold().white(),
-                    timestamp.dimmed(),
-                    "│".dimmed(),
-                    format!("{} bytes", packet.header.len).dimmed()
-                );
 
                 match SlicedPacket::from_ethernet(packet.data) {
                     Ok(sliced) => {
@@ -288,9 +316,38 @@ fn main() -> Result<()> {
                             &sliced,
                         );
 
-                         // Extract ports for stats before consuming sliced
                         let src_port = record.src_port.unwrap_or(0);
                         let dst_port = record.dst_port.unwrap_or(0);
+
+                        // ── Protocol filter ───────────────────────────────────
+                        if let Some(ref proto) = args.protocol {
+                            let matched = match proto.to_lowercase().as_str() {
+                                "tcp"  => record.transport.as_deref() == Some("TCP"),
+                                "udp"  => record.transport.as_deref() == Some("UDP"),
+                                "icmp" => matches!(
+                                    record.transport.as_deref(),
+                                    Some("ICMPv4") | Some("ICMPv6")
+                                ),
+                                "dns"  => src_port == 53 || dst_port == 53,
+                                "http" => src_port == 80 || dst_port == 80
+                                       || src_port == 8080 || dst_port == 8080,
+                                _ => true,
+                            };
+
+                            if !matched {
+                                // decrement count so skipped packets don't count
+                                packet_count -= 1;
+                                continue;
+                            }
+                        }
+
+                        println!(
+                            "\n{} {} {} {}",
+                            format!("[#{}]", packet_count).bold().white(),
+                            timestamp.dimmed(),
+                            "│".dimmed(),
+                            format!("{} bytes", packet.header.len).dimmed()
+                        );
 
                         analyze_packet(sliced);
 
